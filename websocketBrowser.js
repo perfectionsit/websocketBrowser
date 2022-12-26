@@ -2,7 +2,6 @@
  * 前端VUE的Websocket工具包，与后端springboot3.0的WebsocketServer配套使用
  */
 import {ref, watch} from "vue";
-
 let ws, token = [],requestCount = 0 ,closeType = '',path = '',reconnectTimer, pingTimer
 const isClient = ref(false)
 const dataBox = ref({
@@ -62,7 +61,7 @@ function startTimer() {
 }
 
 /**
- * 关闭计时数据返回时间
+ * 关闭数据返回时间计时
  */
 function closeTimer() {
     reconnectTimer && clearTimeout(reconnectTimer)
@@ -156,12 +155,12 @@ async function onClose() {
  * @param res 相应数据
  */
 async function onMessage(res) {
+    closeType = '服务端踢出'
     closeTimer()
-    closeType = (closeType === '客户端登出' ? '客户端登出' : '服务端踢出')
     if (res.data.size > 2) {
         const event = await responseDecode(res.data)
         if (event.responseType === 'response') {
-            closeType = (closeType === '客户端登出' ? '客户端登出' : '')
+            closeType = ''
             if (event.dataType === 'string') {
                 try{
                     event.data = JSON.parse(event.data)
@@ -173,9 +172,13 @@ async function onMessage(res) {
             closeType = ''
             try{
                 event.data = JSON.parse(event.data)
+            }catch (e){
+                throw new Error("响应数据解码失败，请检查响应数据类型"+e)
+            }
+            try{
                 noticeFuncMap[event.data.status](event.data.data)
             }catch (e){
-                throw new Error("响应数据解码失败，请检查响应数据类型")
+                throw new Error("通知方法错误，请检查方法是否加载成功"+e)
             }
         } else {
             closeType = '服务端踢出'
@@ -225,7 +228,6 @@ export function newSocket(_token, _path) {
 function responseDecode(data) {
     return new Promise(async resolve => {
         let information = data.slice(0, 6)
-        let _data = data.slice(6)
         let res = {}
         information = await new Uint8Array(await information.arrayBuffer())
         switch (information[0] & 0xff) {
@@ -239,12 +241,19 @@ function responseDecode(data) {
                 res.responseType = 'close'
         }
         res.count = (information[1] & 0xff) + ((information[2] & 0xff) << 8) + ((information[3] & 0xff) << 16) + ((information[4] & 0xff) << 24)
-        if ((information[5] & 0xff) === 1) {
-            res.dataType = 'string'
-            res.data = await _data.text()
-        } else {
-            res.dataType = 'bytes'
-            res.data = _data
+        switch ((information[5] & 0xff)){
+            case 0:
+                res.dataType = 'bytes'
+                res.data = data.slice(6)
+                break
+            case 1:
+                let _data = data.slice(6)
+                res.dataType = 'string'
+                res.data = await _data.text()
+                break
+            case 2:
+                res.dataType = 'null'
+                res.data = null
         }
         resolve(res)
     })
